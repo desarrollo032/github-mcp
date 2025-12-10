@@ -1,166 +1,166 @@
-import { WebSocketServer } from "ws";
+import { Server } from "mcp/server";
 import { Octokit } from "@octokit/rest";
+import dotenv from "dotenv";
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+// Cargar variables de entorno
+dotenv.config();
 
-if (!GITHUB_TOKEN) {
-  console.error("Falta GITHUB_TOKEN en variables de entorno");
-  process.exit(1);
+// Verificar credenciales de autenticación
+const AUTH_ID = process.env.AUTH_ID;
+const AUTH_TOKEN = process.env.AUTH_TOKEN;
+
+if (!AUTH_ID || !AUTH_TOKEN) {
+  throw new Error("Faltan credenciales de MCP - AUTH_ID y AUTH_TOKEN son requeridos en .env");
 }
 
+// Verificar token de GitHub
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+if (!GITHUB_TOKEN) {
+  throw new Error("Falta GITHUB_TOKEN en variables de entorno");
+}
+
+// Inicializar cliente de GitHub
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
-// Helper JSON-RPC simple
-async function handleRequest(req) {
-  const { id, method, params } = req;
+// Crear servidor MCP
+const server = new Server({
+  name: "mcp-github-server",
+  version: "1.0.0",
+  description: "Servidor MCP para operaciones de GitHub con autenticación"
+});
 
+// ===== MÉTODOS DE GITHUB =====
+
+// Listar repositorios
+server.method("github.listRepos", async (params) => {
+  const { visibility = "all" } = params || {};
+  
   try {
-    let result;
+    const { data } = await octokit.repos.listForAuthenticatedUser({
+      per_page: 100,
+      visibility
+    });
+    
+    return data.map(repo => ({
+      name: repo.name,
+      full_name: repo.full_name,
+      private: repo.private,
+      default_branch: repo.default_branch,
+      html_url: repo.html_url,
+      description: repo.description,
+      language: repo.language,
+      stargazers_count: repo.stargazers_count
+    }));
+  } catch (error) {
+    throw new Error(`Error listando repositorios: ${error.message}`);
+  }
+});
 
-    switch (method) {
-      // A) LEER -------------
-      case "github.listRepos":
-        result = await listRepos(params);
-        break;
-      case "github.getFile":
-        result = await getFile(params);
-        break;
+// Obtener archivo
+server.method("github.getFile", async (params) => {
+  const { owner, repo, path, ref } = params;
+  
+  if (!owner || !repo || !path) {
+    throw new Error("owner, repo y path son requeridos");
+  }
+  
+  try {
+    const { data } = await octokit.repos.getContent({
+      owner,
+      repo,
+      path,
+      ref
+    });
 
-      // B) ESCRIBIR ARCHIVOS -------------
-      case "github.updateFile":
-        result = await updateFile(params);
-        break;
-      case "github.createFile":
-        result = await createFile(params);
-        break;
-
-      // C) ISSUES / PRs -------------
-      case "github.createIssue":
-        result = await createIssue(params);
-        break;
-      case "github.listIssues":
-        result = await listIssues(params);
-        break;
-      case "github.createPullRequest":
-        result = await createPullRequest(params);
-        break;
-      case "github.mergePullRequest":
-        result = await mergePullRequest(params);
-        break;
-
-      // D) AUTOMATION (workflows) -------------
-      case "github.dispatchWorkflow":
-        result = await dispatchWorkflow(params);
-        break;
-
-      default:
-        throw new Error(`Método no soportado: ${method}`);
+    // Si es archivo, GitHub devuelve base64
+    let content = null;
+    if (data && data.content) {
+      content = Buffer.from(data.content, data.encoding || "base64").toString("utf8");
     }
 
-    return { id, result };
-  } catch (err) {
-    console.error("Error manejando request:", err);
     return {
-      id,
-      error: {
-        message: err.message || "Error interno",
-        stack: process.env.NODE_ENV === "development" ? err.stack : undefined
-      }
+      path: data.path,
+      sha: data.sha,
+      content,
+      size: data.size,
+      encoding: data.encoding,
+      type: data.type
     };
+  } catch (error) {
+    throw new Error(`Error obteniendo archivo: ${error.message}`);
   }
-}
+});
 
-// ---------- IMPLEMENTACIONES ----------
+// Crear archivo
+server.method("github.createFile", async (params) => {
+  const { owner, repo, path, content, message, branch } = params;
+  
+  if (!owner || !repo || !path || !content) {
+    throw new Error("owner, repo, path y content son requeridos");
+  }
+  
+  try {
+    const res = await octokit.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path,
+      message: message || `create ${path}`,
+      content: Buffer.from(content, "utf8").toString("base64"),
+      branch
+    });
 
-// A) Leer repos
-async function listRepos({ visibility = "all" } = {}) {
-  const { data } = await octokit.repos.listForAuthenticatedUser({
-    per_page: 100,
-    visibility
-  });
-  return data.map(r => ({
-    name: r.name,
-    full_name: r.full_name,
-    private: r.private,
-    default_branch: r.default_branch,
-    html_url: r.html_url
-  }));
-}
+    return {
+      commitSha: res.data.commit.sha,
+      contentSha: res.data.content.sha,
+      html_url: res.data.content.html_url
+    };
+  } catch (error) {
+    throw new Error(`Error creando archivo: ${error.message}`);
+  }
+});
 
-// A) Leer archivo
-async function getFile({ owner, repo, path, ref }) {
-  const { data } = await octokit.repos.getContent({
-    owner,
-    repo,
-    path,
-    ref
-  });
+// Actualizar archivo
+server.method("github.updateFile", async (params) => {
+  const { owner, repo, path, content, message, branch } = params;
+  
+  if (!owner || !repo || !path || !content) {
+    throw new Error("owner, repo, path y content son requeridos");
+  }
+  
+  try {
+    // Primero obtener SHA actual
+    const current = await octokit.repos.getContent({ owner, repo, path, ref: branch });
+    const sha = current.data.sha;
 
-  // Si es archivo, GitHub devuelve base64
-  const content =
-    data && data.content
-      ? Buffer.from(data.content, data.encoding || "base64").toString("utf8")
-      : null;
+    const res = await octokit.repos.createOrUpdateFileContents({
+      owner,
+      repo,
+      path,
+      message: message || `update ${path}`,
+      content: Buffer.from(content, "utf8").toString("base64"),
+      sha,
+      branch
+    });
 
-  return {
-    path,
-    sha: data.sha,
-    content
-  };
-}
+    return {
+      commitSha: res.data.commit.sha,
+      contentSha: res.data.content.sha,
+      html_url: res.data.content.html_url
+    };
+  } catch (error) {
+    throw new Error(`Error actualizando archivo: ${error.message}`);
+  }
+});
 
-// B) Crear archivo
-async function createFile({ owner, repo, path, content, message, branch }) {
-  const res = await octokit.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path,
-    message: message || `create ${path}`,
-    content: Buffer.from(content, "utf8").toString("base64"),
-    branch
-  });
-
-  return {
-    commitSha: res.data.commit.sha,
-    contentSha: res.data.content.sha
-  };
-}
-
-// B) Actualizar archivo existente
-async function updateFile({ owner, repo, path, content, message, branch }) {
-  // Primero obtener SHA actual
-  const current = await octokit.repos.getContent({ owner, repo, path, ref: branch });
-  const sha = current.data.sha;
-
-  const res = await octokit.repos.createOrUpdateFileContents({
-    owner,
-    repo,
-    path,
-    message: message || `update ${path}`,
-    content: Buffer.from(content, "utf8").toString("base64"),
-    sha,
-    branch
-  });
-
-  return {
-    commitSha: res.data.commit.sha,
-    contentSha: res.data.content.sha
-  };
-}
-
-// C) Crear issue
-async function createIssue({ owner, repo, title, body, labels }) {
-  const { data } = await octokit.issues.create({
-    owner,
-    repo,
-    title,
-    body,
-    labels
-  });
-  return {
-    number: data.number,
-    url: data.html_url
-  };
+// Crear issue
+server.method("github.createIssue", async (params) => {
+  const { owner, repo, title, body, labels } = params;
+  
+  if (!owner || !repo || !title) {
+    throw new Error("owner, repo y title son requeridos");
+  }
+  
+  try {
 }
 
 // C) Listar issues abiertos
