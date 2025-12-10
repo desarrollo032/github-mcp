@@ -161,104 +161,128 @@ server.method("github.createIssue", async (params) => {
   }
   
   try {
-}
-
-// C) Listar issues abiertos
-async function listIssues({ owner, repo, state = "open" }) {
-  const { data } = await octokit.issues.listForRepo({
-    owner,
-    repo,
-    state,
-    per_page: 100
-  });
-  return data.map(i => ({
-    number: i.number,
-    title: i.title,
-    state: i.state,
-    url: i.html_url
-  }));
-}
-
-// C) Crear PR
-async function createPullRequest({
-  owner,
-  repo,
-  title,
-  head,
-  base,
-  body,
-  draft = false
-}) {
-  const { data } = await octokit.pulls.create({
-    owner,
-    repo,
-    title,
-    head,
-    base,
-    body,
-    draft
-  });
-  return {
-    number: data.number,
-    url: data.html_url
-  };
-}
-
-// C) Merge PR
-async function mergePullRequest({ owner, repo, pull_number, merge_method = "squash" }) {
-  const { data } = await octokit.pulls.merge({
-    owner,
-    repo,
-    pull_number,
-    merge_method
-  });
-  return {
-    merged: data.merged,
-    sha: data.sha,
-    message: data.message
-  };
-}
-
-// D) Disparar workflow (GitHub Actions)
-async function dispatchWorkflow({
-  owner,
-  repo,
-  workflow_id, // filename.yml o ID numérico
-  ref,         // rama (ej: "main")
-  inputs = {}
-}) {
-  await octokit.actions.createWorkflowDispatch({
-    owner,
-    repo,
-    workflow_id,
-    ref,
-    inputs
-  });
-  return { ok: true };
-}
-
-// ---------- SERVIDOR WEBSOCKET ----------
-
-const PORT = process.env.PORT || 3000;
-const wss = new WebSocketServer({ port: PORT });
-
-console.log(`Servidor MCP-GitHub WebSocket escuchando en puerto ${PORT}`);
-
-wss.on("connection", ws => {
-  console.log("Cliente conectado");
-
-  ws.on("message", async raw => {
-    let req;
-    try {
-      req = JSON.parse(raw.toString());
-    } catch {
-      ws.send(JSON.stringify({ error: { message: "JSON inválido" } }));
-      return;
-    }
-
-    const res = await handleRequest(req);
-    ws.send(JSON.stringify(res));
-  });
-
-  ws.on("close", () => console.log("Cliente desconectado"));
+    const { data } = await octokit.issues.create({
+      owner,
+      repo,
+      title,
+      body,
+      labels
+    });
+    
+    return {
+      number: data.number,
+      url: data.html_url,
+      title: data.title,
+      state: data.state,
+      created_at: data.created_at
+    };
+  } catch (error) {
+    throw new Error(`Error creando issue: ${error.message}`);
+  }
 });
+
+// Listar issues
+server.method("github.listIssues", async (params) => {
+  const { owner, repo, state = "open" } = params;
+  
+  if (!owner || !repo) {
+    throw new Error("owner y repo son requeridos");
+  }
+  
+  try {
+    const { data } = await octokit.issues.listForRepo({
+      owner,
+      repo,
+      state,
+      per_page: 100
+    });
+    
+    return data.map(issue => ({
+      number: issue.number,
+      title: issue.title,
+      state: issue.state,
+      url: issue.html_url,
+      author: issue.user.login,
+      created_at: issue.created_at,
+      labels: issue.labels.map(label => 
+        typeof label === 'string' ? label : label.name
+      )
+    }));
+  } catch (error) {
+    throw new Error(`Error listando issues: ${error.message}`);
+  }
+});
+
+// Crear Pull Request
+server.method("github.createPullRequest", async (params) => {
+  const { owner, repo, title, head, base, body, draft = false } = params;
+  
+  if (!owner || !repo || !title || !head || !base) {
+    throw new Error("owner, repo, title, head y base son requeridos");
+  }
+  
+  try {
+    const { data } = await octokit.pulls.create({
+      owner,
+      repo,
+      title,
+      head,
+      base,
+      body,
+      draft
+    });
+    
+    return {
+      number: data.number,
+      url: data.html_url,
+      title: data.title,
+      state: data.state,
+      draft: data.draft,
+      author: data.user.login,
+      created_at: data.created_at
+    };
+  } catch (error) {
+    throw new Error(`Error creando Pull Request: ${error.message}`);
+  }
+});
+
+// Merge Pull Request
+server.method("github.mergePullRequest", async (params) => {
+  const { owner, repo, pull_number, merge_method = "squash" } = params;
+  
+  if (!owner || !repo || !pull_number) {
+    throw new Error("owner, repo y pull_number son requeridos");
+  }
+  
+  try {
+    const { data } = await octokit.pulls.merge({
+      owner,
+      repo,
+      pull_number,
+      merge_method
+    });
+    
+    return {
+      merged: data.merged,
+      sha: data.sha,
+      message: data.message
+    };
+  } catch (error) {
+    throw new Error(`Error haciendo merge del Pull Request: ${error.message}`);
+  }
+});
+
+// Disparar workflow (GitHub Actions)
+server.method("github.dispatchWorkflow", async (params) => {
+  const { owner, repo, workflow_id, ref, inputs = {} } = params;
+  
+  if (!owner || !repo || !workflow_id || !ref) {
+    throw new Error("owner, repo, workflow_id y ref son requeridos");
+  }
+  
+  try {
+    await octokit.actions.createWorkflowDispatch({
+      owner,
+      repo,
+      workflow_id,
+      ref,
