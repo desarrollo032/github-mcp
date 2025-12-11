@@ -286,3 +286,89 @@ server.method("github.dispatchWorkflow", async (params) => {
       repo,
       workflow_id,
       ref,
+      inputs
+    });
+    
+    return { 
+      ok: true, 
+      message: `Workflow ${workflow_id} disparado en ${ref}` 
+    };
+  } catch (error) {
+    throw new Error(`Error disparando workflow: ${error.message}`);
+  }
+});
+
+// ===== MÉTODOS UTILITARIOS =====
+
+// Encode base64
+server.method("utils.base64Encode", async (params) => {
+  const { text } = params;
+  
+  if (!text) {
+    throw new Error("text es requerido");
+  }
+  
+  try {
+    return {
+      encoded: Buffer.from(text, "utf8").toString("base64")
+    };
+  } catch (error) {
+    throw new Error(`Error codificando base64: ${error.message}`);
+  }
+});
+
+// Decode base64
+server.method("utils.base64Decode", async (params) => {
+  const { encoded } = params;
+  
+  if (!encoded) {
+    throw new Error("encoded es requerido");
+  }
+  
+  try {
+    return {
+      text: Buffer.from(encoded, "base64").toString("utf8")
+    };
+  } catch (error) {
+    throw new Error(`Error decodificando base64: ${error.message}`);
+  }
+});
+
+// Obtener timestamp actual
+server.method("utils.timestamp", async () => {
+  return {
+    timestamp: Date.now(),
+    iso: new Date().toISOString(),
+    utc: new Date().toUTCString()
+  };
+});
+
+// Obtener información del servidor
+server.method("utils.serverInfo", async () => {
+  return {
+    name: "mcp-github-server",
+    version: "1.0.0",
+    description: "Servidor MCP para operaciones de GitHub",
+    authEnabled: true,
+    availableMethods: [
+      // GitHub methods
+      "github.listRepos",
+      "github.getFile", 
+      "github.createFile",
+      "github.updateFile",
+      "github.createIssue",
+      "github.listIssues",
+      "github.createPullRequest",
+      "github.mergePullRequest",
+      "github.dispatchWorkflow",
+      // Utils methods
+      "utils.base64Encode",
+      "utils.base64Decode",
+      "utils.timestamp",
+      "utils.serverInfo"
+    ]
+  };
+});
+
+// Exportar servidor
+export default server;

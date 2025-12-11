@@ -3,8 +3,17 @@
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
+  "description": "Servidor MCP para operaciones de GitHub con autenticación",
+  "keywords": [
+    "mcp",
+    "github",
+    "model-context-protocol",
+    "fastmcp"
+  ],
+  "author": "MCP Server Generator",
+  "license": "MIT",
   "dependencies": {
-    "@octokit/rest": "latest",
-    "ws": "latest"
-  }
-}
+    "mcp": "latest",
+    "dotenv": "latest",
+    "@octokit/rest": "latest"
+  },
